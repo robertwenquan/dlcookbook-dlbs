@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Classes defined in this module implement various data iterators."""
+from __future__ import print_function
+import os
 import mxnet as mx
 from mxnet.io import DataBatch, DataIter
 import numpy as np
@@ -19,7 +21,7 @@ import numpy as np
 
 class SyntheticDataIterator(DataIter):
     """ Feeds synthetic (random) data.
-    
+
     See this page for more details:
     https://github.com/apache/incubator-mxnet/blob/master/example/image-classification/common/data.py
     Works with two standard input tensors - data tensor and label tensor.
@@ -27,11 +29,11 @@ class SyntheticDataIterator(DataIter):
     def __init__(self, data_shape, label_shape, labels_range, max_iter=100, dtype=np.float32):
         """MXNet partitions data batch evenly among the available GPUs. Here, the
            batch size is the effective batch size.
-           
+
         Memory for data and label tensors is allocated with `cpu_pinned` context.
         To make this iterator consistent with other iterators that provide real data,
         I always set maximal number of iterations to be `warmup_iters + bench_iters`.
-           
+
         :param int num_classes: Number of classes.
         :param tuple data_shape: Shape of input data tensor (X) including batch size.
                                  The batch size if the 0th dimension (bsz = data_shape[0])
@@ -94,14 +96,14 @@ class SyntheticDataIterator(DataIter):
 
 class DataIteratorFactory(object):
     """A factory that now creates two types of data iterators.
-    
+
     The one is a synthetic data iterator that feeds random tensors, the other one
     is actually an ImageRecordIter.
     """
     @staticmethod
     def get(data_shape, label_shape, labels_range, opts, kv_store=None):
         """Creates data iterator.
-        
+
         :param int num_classes: Number of classes.
         :param tuple data_shape: Shape of input data tensor (X) including batch size.
                                  The batch size if the 0th dimension (bsz = data_shape[0]).
@@ -112,6 +114,7 @@ class DataIteratorFactory(object):
         """
         data_iter = None
         if 'data_dir' not in opts or not opts['data_dir']:
+            print("[INFO] Creating synthetic dataset with SyntheticDataIterator")
             data_iter = SyntheticDataIterator(
                 data_shape,
                 label_shape,
@@ -122,25 +125,41 @@ class DataIteratorFactory(object):
                 dtype='float32'
             )
         else:
-            if kv_store:
-                (rank, nworker) = (kv_store.rank, kv_store.num_workers)
+            path = opts['data_dir']
+            fnames = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+            if len(fnames) == 1 and fnames[0].endswith('.npz'):
+                print("[INFO] Loading numpy (npz) dataset with mx.io.NDArrayIter into memory")
+                dataset = np.load(os.path.join(path, fnames[0]))
+                if 'data' not in dataset:
+                    raise "Dataset does not provide data."
+                labels = dataset['labels'] if 'labels' in dataset else None
+                if labels is None:
+                    print ("[WARNING] no labels found, assuming unsupervised training.")
+                data_iter = mx.io.NDArrayIter(
+                    data=dataset['data'], label=labels, batch_size=data_shape[0],
+                    shuffle=False, last_batch_handle='discard'
+                )
             else:
-                (rank, nworker) = (0, 1)
-            # https://mxnet.incubator.apache.org/api/python/io.html#mxnet.io.ImageRecordIter
-            # https://github.com/apache/incubator-mxnet/blob/master/example/image-classification/common/data.py
-            data_iter = mx.io.ImageRecordIter(
-                path_imgrec=opts['data_dir'],
-                data_name='data',
-                label_name='softmax_label',
-                data_shape=(data_shape[1], data_shape[2], data_shape[3]),
-                batch_size=data_shape[0],
-                rand_crop=True,
-                rand_mirror=True,
-                #dtype=opts['dtype'],
-                preprocess_threads = opts.get('preprocess_threads', 4),
-                prefetch_buffer = opts.get('prefetch_buffer ', 10),
-                dtype='float32',
-                num_parts=nworker,
-                part_index=rank
-            )
+                print("[INFO] Loading images with mx.io.ImageRecordIter")
+                if kv_store:
+                    (rank, nworker) = (kv_store.rank, kv_store.num_workers)
+                else:
+                    (rank, nworker) = (0, 1)
+                # https://mxnet.incubator.apache.org/api/python/io.html#mxnet.io.ImageRecordIter
+                # https://github.com/apache/incubator-mxnet/blob/master/example/image-classification/common/data.py
+                data_iter = mx.io.ImageRecordIter(
+                    path_imgrec=opts['data_dir'],
+                    data_name='data',
+                    label_name='softmax_label',
+                    data_shape=(data_shape[1], data_shape[2], data_shape[3]),
+                    batch_size=data_shape[0],
+                    rand_crop=True,
+                    rand_mirror=True,
+                    #dtype=opts['dtype'],
+                    preprocess_threads=opts.get('preprocess_threads', 4),
+                    prefetch_buffer=opts.get('prefetch_buffer ', 10),
+                    dtype='float32',
+                    num_parts=nworker,
+                    part_index=rank
+                )
         return data_iter

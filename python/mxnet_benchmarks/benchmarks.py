@@ -334,6 +334,7 @@ def benchmark_training(model, opts):
         opts,
         kv_store=kv
     )
+    print("[INFO] Dataset: {data=%s, labels=%s}" % (str(train_data.provide_data), str(train_data.provide_label)))
     devices = get_devices(opts)
 
     mod = BenchmarkingModule(symbol=model.output, context=devices)
