@@ -27,6 +27,7 @@ import json
 from dlbs.exceptions import ConfigurationError
 from dlbs.exceptions import LogicError
 from dlbs.utils import DictUtils
+from dlbs.launcher import Launcher
 from dlbs.utils import param2str
 
 

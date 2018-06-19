@@ -3,12 +3,25 @@
 #-------------------------------------------------------------------------------
 
 assert_docker_img_exists() {
-  [ "$#" -ne 1 ] && logfatal "assert_docker_img_exists: one arguments expected";
+  [ "$#" -ne 1 ] && logfatal "assert_docker_img_exists: one argument expected";
   [ -z "$(docker images -q $1)" ] && \
    logfatal "docker image \"$1\" does not exist locally, \
              pull it from hub or build it manually" || return 0;
 }
+assert_not_docker_and_singularity() {
+  [ "$exp_docker"  = true -a "$exp_singularity" = true ] && \
+   logfatal "Both exp.docker and exp.singularity were set to true, however, only one container type can be selected." || return 0;
+}
+
+assert_singularity_img_exists() {
+  [ "$#" -ne 1 ] && logfatal "assert_singularity_img_exists: one argument expected";
+  [ ! -f $1 ] && \
+   echo "singularity image \"$1\" does not exist locally, pull it from hub or build it manually" || return 0;
+}
+
+export -f assert_not_docker_and_singularity
 export -f assert_docker_img_exists
+export -f assert_singularity_img_exists
 
 # This can be used like: loginfo "..."
 timestamp() { date +'%m-%d-%y %H:%M:%S';}
