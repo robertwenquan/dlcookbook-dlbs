@@ -28,6 +28,12 @@
 template<>
 std::string S<bool>(const bool &t) { return (t ? "true" : "false"); }
 
+template<>
+int get_env_var<int>(std::string const &var, const int& default_val) {
+    char *val = getenv( var.c_str() );
+    return val == nullptr ? default_val : std::stoi(val);
+}
+
 void fill_random(float *vec, const size_t sz) {
   std::random_device rnd_device;
   std::mt19937 mersenne_engine(rnd_device());
@@ -35,12 +41,6 @@ void fill_random(float *vec, const size_t sz) {
   auto gen = std::bind(dist, mersenne_engine);
   std::generate(vec, vec+sz, gen);
 }
-
-std::string get_env_var(std::string const &var, const std::string& default_val) {
-    char *val = getenv( var.c_str() );
-    return val == nullptr ? default_val : std::string(val);
-}
-
 
 std::string fs_utils::parent_dir(std::string dir) {
     if (dir.empty())
@@ -254,7 +254,7 @@ template void PictureTool::opencv2tensor<unsigned char>(unsigned char* opencv_da
 
 binary_file::binary_file(const std::string& dtype,
                          const bool advise_no_cache) : advise_no_cache_(advise_no_cache), dtype_(dtype) {
-    debug_disable_array_cast_ = (get_env_var("DLBS_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS") == "1");
+    debug_disable_array_cast_ = (get_env_var<std::string>("DLBS_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS", "") == "1");
 }
 
 bool binary_file::is_opened() {
@@ -299,6 +299,82 @@ void binary_file::allocate_if_needed(const size_t count) {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+batch_reader::batch_reader(const std::string& dtype) : 
+    dtype_(dtype == "float" ? data_type::dt_float : data_type::dt_unsigned_char) {
+
+    if (dtype != "float" && dtype != "uchar") {
+        throw std::invalid_argument(
+            "Invalid image data type (expecting 'float' or 'uchar') but given '" + dtype + "'."
+        );
+    }
+    if (dtype_ == data_type::dt_float) {
+        throw std::invalid_argument(
+            "Single precision format is not supported yet."
+        );
+    }
+    
+    block_sz_ = get_env_var<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
+}
+
+bool batch_reader::is_opened() {
+    return (fd_ > 0);
+}
+
+bool batch_reader::open(const std::string& fname) {
+    fd_ = ::open(fname.c_str(), O_RDONLY | O_DIRECT);
+    return is_opened();
+}
+
+void batch_reader::close() {
+    if (is_opened()) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+ssize_t batch_reader::read(float* dest, const size_t count) {
+    const size_t nelements_preloaded = (buffer_offset_ == 0 ? 0 : block_sz_ - buffer_offset_); // Number of elements preloaded from last read for this batch.
+    const size_t nelements_to_read = count - nelements_preloaded;  // Number of elements to read
+    const size_t last_block_nelements = nelements_to_read % block_sz_; // Number of elements in last block.
+    const int num_blocks_to_read = nelements_to_read / block_sz_ + (last_block_nelements == 0 ? 0 : 1); // Number of blocks to read.
+    const size_t nbytes_to_read = num_blocks_to_read * block_sz_;
+    
+    allocate(block_sz_ * (1 + count / block_sz_ + (count % block_sz_ == 0 ? 0 : 1)));
+    
+    const ssize_t num_bytes_read = ::read(
+        fd_,                                                            // file descriptor
+        (void*)(buffer_ + (nelements_preloaded == 0 ? 0 : block_sz_)),  // write offset is at most one block
+        nbytes_to_read                                                  // number of bytes to read
+    );
+    if (num_bytes_read != nbytes_to_read) {
+    }
+     
+\
+    return read_count;
+}
+
+void batch_reader::allocate(const size_t new_sz) {
+    if (buffer_size_ < new_sz) {
+        deallocate();
+        buffer_ = static_cast<unsigned char*>(aligned_alloc(block_sz_, buffer_size_));
+        if (buffer_ == nullptr) {
+            throw std::bad_alloc();
+        }
+        buffer_size_ = new_sz;
+    }
+}
+
+void batch_reader::deallocate() {
+    if (buffer_ != nullptr) {
+        free(buffer_);
+        buffer_ = nullptr;
+        buffer_size_ = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 process_barrier::process_barrier(std::string specs) : post_mode_(true) {
     std::replace(specs.begin(), specs.end(), ',', ' ');

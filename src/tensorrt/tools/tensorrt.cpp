@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
     logger.log_info(data_opts);
     //
     allocator *alloc(nullptr);
-    if (get_env_var("DLBS_TENSORRT_NO_PINNED_MEMORY") != "1") {
+    if (get_env_var<std::string>("DLBS_TENSORRT_NO_PINNED_MEMORY", "") != "1") {
         logger.log_info("[main                  ]: Creating pinned memory allocator.");
         alloc = new pinned_memory_allocator();
     } else {
@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
     // from pool of task objects, will populate them with data and will submit tasks to data queue. All
     // preprocessing logic needs to be implemented in data provider.
     dataset* data(nullptr);
-    if (get_env_var("DLBS_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS") == "1") {
+    if (get_env_var<std::string>("DLB_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS", "") == "1") {
         logger.log_warning("[main                  ]: Will not cast images float arrays (this is for debug purposes only). Normally you should not see this message.");
     }
     if (data_opts.data_name_ == "synthetic" || data_opts.data_dir_ == "") {
@@ -166,9 +166,9 @@ int main(int argc, char **argv) {
     // Sync with othet processes if need to do so
     process_barrier* barrier(nullptr);
     timer synch_timer;
-    if (get_env_var("DLBS_TENSORRT_SYNCH_BENCHMARKS") != "") {
+    if (get_env_var<std::string>("DLBS_TENSORRT_SYNCH_BENCHMARKS", "") != "") {
         engine.pause();
-        barrier = new process_barrier(get_env_var("DLBS_TENSORRT_SYNCH_BENCHMARKS"));
+        barrier = new process_barrier(get_env_var<std::string>("DLBS_TENSORRT_SYNCH_BENCHMARKS", ""));
         logger.log_info(fmt("[main                  ]: Synching with other processes (%d/%d)", barrier->rank(), barrier->count()));
         barrier->wait();
         engine.resume();

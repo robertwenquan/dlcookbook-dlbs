@@ -184,7 +184,7 @@ void tensorrt_inference_engine::copy_input_to_gpu_asynch(inference_msg *msg ,cud
 void tensorrt_inference_engine::do_inference(abstract_queue<inference_msg*> &request_queue,
                                              abstract_queue<inference_msg*> &response_queue) {
     init_device();
-    if (get_env_var("DLBS_TENSORRT_INFERENCE_IMPL_VER") == "1") {
+    if (get_env_var<std::string>("DLBS_TENSORRT_INFERENCE_IMPL_VER", "") == "1") {
         do_inference1(request_queue, response_queue);
         return;
     }
@@ -194,7 +194,7 @@ void tensorrt_inference_engine::do_inference(abstract_queue<inference_msg*> &req
     // copy/compute ops. This makes sense when time to fetch data fro, request queue
     // is very small. If it's large (greater than inference time), you may want to do
     // everything sequentially.
-    const bool overlap_copy_compute = (get_env_var("DLBS_TENSORRT_DO_NOT_OVERLAP_COPY_COMPUTE") != "1");
+    const bool overlap_copy_compute = (get_env_var<std::string>("DLBS_TENSORRT_DO_NOT_OVERLAP_COPY_COMPUTE", "") != "1");
     logger_.log_info(me + ": overlap copy and compute " + S(overlap_copy_compute));
     cuda_helper helper({"input_consumed","infer_start","infer_stop"}, {"copy","compute"});
     running_average copy2device_synch, fetch, process, process_fetch, copy2host, submit;

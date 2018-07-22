@@ -46,7 +46,13 @@ std::string S(const T &t) { return std::to_string(t); }
 template<>
 std::string S<bool>(const bool &t);
 
-std::string get_env_var(std::string const &var, const std::string& default_val="");
+template<typename T>
+T get_env_var(std::string const &var, const T& default_val) {
+    char *val = getenv( var.c_str() );
+    return val == nullptr ? default_val : T(val);
+}
+template<>
+int get_env_var<int>(std::string const &var, const int& default_val);
 
 
 /**
@@ -377,6 +383,41 @@ public:
     void close();
     ssize_t read(float* dest, const size_t count);
     void allocate_if_needed(const size_t count);
+};
+
+class batch_reader {
+private:
+    enum class data_type {
+        dt_float,
+        dt_unsigned_char
+    };
+    int block_sz_ = 512;                   //!< Block size for O_DIRECT. Use DLBS_TENSORRT_STORAGE_BLOCK_SIZE to overwrite this value.
+    int fd_ = -1;                          //!< File descriptor.
+    const data_type dtype_;                //!< Data type for batch tensor.
+    
+    unsigned char* buffer_ = nullptr;      // If images are stored as unsigned chars, use this buffer. This is an aligned 
+                                           // buffer on the block_sz_ boundary and its size is a multiple of block_sz_.
+    size_t buffer_size_;                   // Size of the buffer in bytes.
+    size_t buffer_offset_ = 0;             // Offset in buffer if we have some bytes from previous read. In this case next read must 
+                                           // write to buffer_ starting from block_sz_ position. The value of buffer_offset_ is
+                                           // always < block_sz_.
+public:
+    /**
+     * @brief Class constructor
+     * @param dtype Data type used to store images. One of 'float' or 'uchar'.
+     */
+    batch_reader(const std::string& dtype="float");
+    virtual ~batch_reader() { close(); }
+    bool is_opened();
+    bool open(const std::string& fname);
+    void close();
+    /**
+     * @brief Read 'count' elements from file.
+     */
+    ssize_t read(float* dest, const size_t count);
+private:
+    void allocate(const size_t new_sz);
+    void deallocate();
 };
 
 class allocator {

@@ -24,7 +24,7 @@
 
 void tensor_dataset::prefetcher_func(tensor_dataset* myself,
                                      const size_t prefetcher_id, const size_t num_prefetchers) {
-    std::string split_strategy = get_env_var("DLBS_TENSORRT_DATASET_SPLIT", "uniform");
+    std::string split_strategy = get_env_var<std::string>("DLBS_TENSORRT_DATASET_SPLIT", "uniform");
     sharded_vector<std::string> *my_files(nullptr);
     std::vector<std::string> fnames;
     if (split_strategy == "uniform") {
@@ -55,7 +55,7 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
     
     inference_msg *output(nullptr);
     size_t num_images_in_batch = 0;
-    const bool advise_no_cache = (get_env_var("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED") != "1");
+    const bool advise_no_cache = (get_env_var<std::string>("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED", "") != "1");
     myself->logger_.log_warning(fmt(
         "[prefetcher       %02d/%02d]: will advise OS to not cache dataset files: %d",
         prefetcher_id, num_prefetchers, int(advise_no_cache)
