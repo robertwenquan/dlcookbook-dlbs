@@ -55,12 +55,18 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
     
     inference_msg *output(nullptr);
     size_t num_images_in_batch = 0;
-    const bool advise_no_cache = (get_env_var<std::string>("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED", "") != "1");
-    myself->logger_.log_warning(fmt(
-        "[prefetcher       %02d/%02d]: will advise OS to not cache dataset files: %d",
-        prefetcher_id, num_prefetchers, int(advise_no_cache)
-    ));
-    binary_file bfile(myself->opts_.dtype_, advise_no_cache);
+    abstract_reader* file_reader(nullptr);
+    const auto& reader_type = get_env_var<std::string>("DLBS_TENSORRT_FILE_READER", "direct");
+    if (reader_type == "default") {
+        const bool advise_no_cache = (get_env_var<std::string>("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED", "") != "1");
+        myself->logger_.log_warning(fmt(
+            "[prefetcher       %02d/%02d]: will advise OS to not cache dataset files: %d",
+            prefetcher_id, num_prefetchers, int(advise_no_cache)
+        ));
+        file_reader = new reader(myself->opts_.dtype_, advise_no_cache);
+    } else {
+        file_reader = new direct_reader(myself->opts_.dtype_);
+    }
     try {
         timer clock;
         clock.restart();
@@ -70,7 +76,7 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
                 timer fetch_clock;
                 output = myself->inference_msg_pool_->get();
                 fetch.update(fetch_clock.ms_elapsed());
-                bfile.allocate_if_needed(output->batch_size() * img_size);
+                file_reader->allocate_if_needed(output->batch_size() * img_size);
             }
             // If we have read all images, submit them
             if (num_images_in_batch >= output->batch_size()) {
@@ -84,18 +90,18 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
                 clock.restart();
                 continue;
             }
-            if (!bfile.is_opened()) {
-                bfile.open(my_files->next());
+            if (!file_reader->is_opened()) {
+                file_reader->open(my_files->next());
             }
 
             // Try to read as many images in one read call as we need
-            const ssize_t read_count  = bfile.read(
+            const ssize_t read_count  = file_reader->read(
                 output->input() + img_size * num_images_in_batch,
                 img_size * (output->batch_size() - num_images_in_batch)
             );
             // If nothing has been loaded, go to a next file
             if (read_count <= 0) {
-                bfile.close();
+                file_reader->close();
                 continue;
             }
             // How many images have we just loaded?
@@ -104,6 +110,7 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
     } catch(queue_closed) {
     }
     delete my_files;
+    delete file_reader;
     myself->logger_.log_info(fmt(
         "[prefetcher       %02d/%02d]: {fetch:%.5f}-->--[load:%.5f]-->--{submit:%.5f}",
         prefetcher_id, num_prefetchers, fetch.value(), load.value(), submit.value()

@@ -252,23 +252,24 @@ template void PictureTool::opencv2tensor<float>(unsigned char* opencv_data, cons
 template void PictureTool::opencv2tensor<unsigned char>(unsigned char* opencv_data, const int nchannels, const int height, const int width, unsigned char* tensor);
 
 
-binary_file::binary_file(const std::string& dtype,
-                         const bool advise_no_cache) : advise_no_cache_(advise_no_cache), dtype_(dtype) {
+reader::reader(const std::string& dtype,
+               const bool advise_no_cache) : advise_no_cache_(advise_no_cache), dtype_(dtype) {
     debug_disable_array_cast_ = (get_env_var<std::string>("DLBS_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS", "") == "1");
 }
 
-bool binary_file::is_opened() {
+bool reader::is_opened() {
     return (fd_ > 0);
 }
 
-void binary_file::open(const std::string& fname) {
+bool reader::open(const std::string& fname) {
     fd_ = ::open(fname.c_str(), O_RDONLY);
     if (advise_no_cache_) {
         fdatasync(fd_);
     }
+    return is_opened();
 }
 
-void binary_file::close() {
+void reader::close() {
     if (fd_ > 0) {
         if (advise_no_cache_) {
             posix_fadvise(fd_, 0, 0, POSIX_FADV_DONTNEED);
@@ -278,7 +279,7 @@ void binary_file::close() {
     }
 }
 
-ssize_t binary_file::read(float* dest, const size_t count) {
+ssize_t reader::read(float* dest, const size_t count) {
     ssize_t read_count;
     if (buffer_.empty()) {
         const ssize_t num_bytes_read = ::read(fd_, (void*)dest,  sizeof(float)*count);
@@ -293,7 +294,7 @@ ssize_t binary_file::read(float* dest, const size_t count) {
     return read_count;
 }
 
-void binary_file::allocate_if_needed(const size_t count) {
+void reader::allocate_if_needed(const size_t count) {
     if (dtype_ == "uchar" && buffer_.size() != count) {
         buffer_.resize(count);
     }
@@ -301,7 +302,7 @@ void binary_file::allocate_if_needed(const size_t count) {
 
 
 // ---------------------------------------------------------------------------
-batch_reader::batch_reader(const std::string& dtype) : 
+direct_reader::direct_reader(const std::string& dtype) : 
     dtype_(dtype == "float" ? data_type::dt_float : data_type::dt_unsigned_char) {
 
     if (dtype != "float" && dtype != "uchar") {
@@ -316,49 +317,135 @@ batch_reader::batch_reader(const std::string& dtype) :
     }
     
     block_sz_ = get_env_var<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
+    #ifdef TRACE_ALL
+    std::cerr << "[batch reader] batch_reader::batch_reader(dtype=" << dtype << ", block size=" << block_sz_ << ")." << std::endl;
+    #endif
 }
 
-bool batch_reader::is_opened() {
+bool direct_reader::is_opened() {
     return (fd_ > 0);
 }
 
-bool batch_reader::open(const std::string& fname) {
+bool direct_reader::open(const std::string& fname) {
+    #ifdef TRACE_ALL
+    std::cerr << "[batch reader] opening file (fname=" << fname << ")." << std::endl;
+    #endif
+    // Reser buffer offset each time new file is opened.
+    buffer_offset_ = 0;
+    // http://man7.org/linux/man-pages/man2/open.2.html
     fd_ = ::open(fname.c_str(), O_RDONLY | O_DIRECT);
+    if (fd_ < 0) {
+        std::cerr << "Input file (" << fname << ") has not been opened. Errno is " << errno << "." << std::endl;
+        if (errno == EINVAL) {
+            std::cerr << "This is the EINVAL error (the filesystem does not support the O_DIRECT flag)." << std::endl;
+        }
+    }
     return is_opened();
 }
 
-void batch_reader::close() {
+void direct_reader::close() {
+    #ifdef TRACE_ALL
+    std::cerr << "[batch reader] closing file." << std::endl;
+    #endif
     if (is_opened()) {
         ::close(fd_);
         fd_ = -1;
     }
 }
 
-ssize_t batch_reader::read(float* dest, const size_t count) {
-    const size_t nelements_preloaded = (buffer_offset_ == 0 ? 0 : block_sz_ - buffer_offset_); // Number of elements preloaded from last read for this batch.
-    const size_t nelements_to_read = count - nelements_preloaded;  // Number of elements to read
-    const size_t last_block_nelements = nelements_to_read % block_sz_; // Number of elements in last block.
-    const int num_blocks_to_read = nelements_to_read / block_sz_ + (last_block_nelements == 0 ? 0 : 1); // Number of blocks to read.
+/** Implementation comments.
+ *    buffer_offset_: Number of bytes associated with previous read. If it's not 0,
+ *                    the `block_sz_ - buffer_offset_` value defines how many bytes we
+ *                    have for current batch.
+ *    In the comments below I use number of bytes/number of elements interchangeably 
+ *    because we always read elements of size 1 byte.
+ *    This method will fail if batch is less than 1 block.
+ */
+ssize_t direct_reader::read(float* dest, const size_t count) {
+    // Number of elements preloaded from last read for this batch.
+    const size_t nelements_preloaded = (buffer_offset_ == 0 ? 0 : block_sz_ - buffer_offset_);
+    // Number of elements to read. This number is 'aligned' on block_sz_ boundary. But it's length
+    // is not necesserily a multiple of block_sz_. Alignment here means that we either write into
+    // buffer starting from 1st block (offset is 0), or starting from 2nd block (offset is block_sz_).
+    const size_t nelements_to_read = count - nelements_preloaded;
+    // Number of elements in a last block. If it's zero, it means we need to read a whole number of
+    // blocks. If it's not 0, this number will later become buffer_offset_ for a next batch.
+    const size_t last_block_nelements = nelements_to_read % block_sz_;
+    // Number of blocks/bytes to read.
+    const int num_blocks_to_read = nelements_to_read / block_sz_ + (last_block_nelements == 0 ? 0 : 1);
     const size_t nbytes_to_read = num_blocks_to_read * block_sz_;
     
+    // Allocate aligned memory if it has not been allocated.
     allocate(block_sz_ * (1 + count / block_sz_ + (count % block_sz_ == 0 ? 0 : 1)));
-    
+    // Read from file.
     const ssize_t num_bytes_read = ::read(
-        fd_,                                                            // file descriptor
-        (void*)(buffer_ + (nelements_preloaded == 0 ? 0 : block_sz_)),  // write offset is at most one block
-        nbytes_to_read                                                  // number of bytes to read
+        fd_,                                                            // File descriptor.
+        (void*)(buffer_ + (nelements_preloaded == 0 ? 0 : block_sz_)),  // Write offset is at most one block.
+        nbytes_to_read                                                  // Number of bytes to read, always a whole number of blocks.
     );
-    if (num_bytes_read != nbytes_to_read) {
+    if (num_bytes_read < 0) {
+        // std::cerr << "Error reading file (errno=" << errno << "). Debug me." << std::endl;
+        // Can it be the case that when I try to read something after I reached EOF, read when working
+        // on files opened with O_DIRECT fails with EINVAL error instead of returning 0 bytes?
+        // I am getting this error on a very last batch.
+        return 0;
     }
-     
-\
-    return read_count;
+    if (num_bytes_read == 0) {
+        // This is fine. The higher level code will close this file and will open another one.
+        return 0;
+    }
+    
+    // Copy data from internal buffer to user provided dest buffer
+    const size_t ntotal_bytes = nelements_preloaded + std::min(nelements_to_read, size_t(num_bytes_read));
+    int read_idx(buffer_offset_);
+    for (size_t i=0; i<ntotal_bytes; ++i) {
+        dest[i] = static_cast<float>(buffer_[read_idx++]);
+    }
+
+    #ifdef TRACE_ALL
+    std::cerr << "[batch reader] reading data (buffer_offset_=" << buffer_offset_<< ", nelements_preloaded=" << nelements_preloaded
+              << ", nelements_to_read=" << nelements_to_read << ", last_block_nelements=" << last_block_nelements
+              << ", num_blocks_to_read=" << num_blocks_to_read << ", nbytes_to_read=" << nbytes_to_read
+              << ", num_bytes_read=" << num_bytes_read << ", ntotal_bytes=" << ntotal_bytes
+              << ", count=" << count
+              <<  ")." << std::endl;
+    #endif
+    
+    // Deal with offset for a next batch only if we have read entire batch
+    if (num_bytes_read == nbytes_to_read) {
+        if (last_block_nelements == 0) {
+            buffer_offset_ = 0;
+        } else {
+            // We have read a whole number of blocks and last 'nelements_next_batch' elements
+            // are from next batch.
+            const size_t nelements_next_batch = block_sz_ - last_block_nelements;
+            for (size_t i=0; i<nelements_next_batch; ++i) {
+                buffer_[last_block_nelements+i] = buffer_[ntotal_bytes-nelements_next_batch+i];
+            }
+            buffer_offset_ = last_block_nelements;
+        }
+    } else {
+        // Not all data have been read. It's either end of file or something else. This something else
+        // can be (I think) some iterrupt signal. I should probably wrap the above call to read in a 
+        // loop.
+        // If it's end of file, next call will return 0.
+        buffer_offset_ = 0;  // Better solution?
+    }
+
+    return ntotal_bytes;
 }
 
-void batch_reader::allocate(const size_t new_sz) {
+void direct_reader::allocate(const size_t new_sz) {
+    if (new_sz % block_sz_ != 0) {
+        throw fmt("Invalid buffer size (%u). Must be a multiple of block size (%u).", new_sz, block_sz_);
+    }
     if (buffer_size_ < new_sz) {
+        #ifdef TRACE_ALL
+        std::cerr << "[batch reader] allocating memory (buffer size=" << buffer_size_ << ", new size=" << new_sz <<  ")." << std::endl;
+        #endif
         deallocate();
-        buffer_ = static_cast<unsigned char*>(aligned_alloc(block_sz_, buffer_size_));
+        const size_t alignment = block_sz_;
+        buffer_ = static_cast<unsigned char*>(aligned_alloc(alignment, new_sz));
         if (buffer_ == nullptr) {
             throw std::bad_alloc();
         }
@@ -366,7 +453,10 @@ void batch_reader::allocate(const size_t new_sz) {
     }
 }
 
-void batch_reader::deallocate() {
+void direct_reader::deallocate() {
+    #ifdef TRACE_ALL
+    std::cerr << "[batch reader] deallocating memory (buffer size=" << buffer_size_ << ")." << std::endl;
+    #endif
     if (buffer_ != nullptr) {
         free(buffer_);
         buffer_ = nullptr;

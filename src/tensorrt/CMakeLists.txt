@@ -61,6 +61,10 @@ add_executable(tests_ipc tests/tests_ipc.cpp)
 target_link_libraries(tests_ipc ${TENSORRT_LIBS})
 
 
+add_executable(tests_direct_reader tests/tests_direct_reader.cpp)
+target_link_libraries(tests_direct_reader ${TENSORRT_LIBS})
+
+
 add_executable(tensorrt tools/tensorrt.cpp)
 target_link_libraries(tensorrt ${TENSORRT_LIBS} tensorrt_cuda_lib tensorrt_rt_lib libnvinfer.so.2 nvcaffe_parser)
 
@@ -99,6 +103,7 @@ install(TARGETS images2tensors RUNTIME DESTINATION bin)
 install(TARGETS benchmark_tensor_dataset RUNTIME DESTINATION bin)
 install(TARGETS benchmark_host2device_copy RUNTIME DESTINATION bin)
 install(TARGETS tests_ipc RUNTIME DESTINATION bin)
+install(TARGETS tests_direct_reader RUNTIME DESTINATION bin)
 
 
 #if(NOT CMAKE_BUILD_TYPE)
@@ -109,3 +114,8 @@ set(CMAKE_BUILD_TYPE Release)
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+
+# Uncomment the following line to enable super detailed tracining (print statments)
+# for some components.
+#add_definitions(-DTRACE_ALL)
+

@@ -363,11 +363,21 @@ public:
 template<> struct PictureTool::pixel<float> { static const char encoding = 1; };
 template<> struct PictureTool::pixel<unsigned char> { static const char encoding = 10; };
 
+
+class abstract_reader {
+public:
+    virtual bool is_opened() = 0;
+    virtual bool open(const std::string& fname) = 0;
+    virtual void close() = 0;
+    virtual ssize_t read(float* dest, const size_t count) = 0;
+    virtual void allocate_if_needed(const size_t count) = 0;
+};
+
 /**
  * @brief A file wrapper that can use either C approach or C++ streams
  * to read binary data.
  */
-class binary_file {
+class reader : public abstract_reader {
 private:
     int fd_ = -1;                          //!< File descriptor.
     bool advise_no_cache_ = false;         //!< If true, advise OS not to cache file.
@@ -375,17 +385,17 @@ private:
     std::vector<unsigned char> buffer_;    //!< If images are stored as unsigned chars, use this buffer.
     bool debug_disable_array_cast_ = false;//!< For debugging purposes, disable casting array of unsigned chars to float.
 public:
-    binary_file(const std::string& dtype="float",
-                const bool advise_no_cache=false);
-    virtual ~binary_file() { close(); }
+    reader(const std::string& dtype="float",
+           const bool advise_no_cache=false);
+    virtual ~reader() { close(); }
     bool is_opened();
-    void open(const std::string& fname);
+    bool open(const std::string& fname);
     void close();
     ssize_t read(float* dest, const size_t count);
     void allocate_if_needed(const size_t count);
 };
 
-class batch_reader {
+class direct_reader : public abstract_reader {
 private:
     enum class data_type {
         dt_float,
@@ -406,8 +416,8 @@ public:
      * @brief Class constructor
      * @param dtype Data type used to store images. One of 'float' or 'uchar'.
      */
-    batch_reader(const std::string& dtype="float");
-    virtual ~batch_reader() { close(); }
+    direct_reader(const std::string& dtype="float");
+    virtual ~direct_reader() { close(); }
     bool is_opened();
     bool open(const std::string& fname);
     void close();
@@ -415,6 +425,9 @@ public:
      * @brief Read 'count' elements from file.
      */
     ssize_t read(float* dest, const size_t count);
+    // This is deprecated and does nothing. All allocations
+    // are done on the fly in read function.
+    void allocate_if_needed(const size_t count) {}
 private:
     void allocate(const size_t new_sz);
     void deallocate();
