@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
     int image_size = 224;
     
     const size_t num_batch_elements = batch_size * ( 3 * image_size * image_size );
-    std::vector<float> batch(num_batch_elements);
+    std::vector<host_dtype> batch(num_batch_elements);
     
     direct_reader reader("uchar");
     if (!reader.open(fpath)) {

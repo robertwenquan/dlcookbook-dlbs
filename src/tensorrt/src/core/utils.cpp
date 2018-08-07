@@ -41,6 +41,13 @@ void fill_random(float *vec, const size_t sz) {
   auto gen = std::bind(dist, mersenne_engine);
   std::generate(vec, vec+sz, gen);
 }
+void fill_random(unsigned char *vec, const size_t sz) {
+  std::random_device rnd_device;
+  std::mt19937 mersenne_engine(rnd_device());
+  std::uniform_int_distribution<unsigned int> dist(0, 255);
+  auto gen = std::bind(dist, mersenne_engine);
+  std::generate(vec, vec+sz, gen);
+}
 
 std::string fs_utils::parent_dir(std::string dir) {
     if (dir.empty())
@@ -279,11 +286,11 @@ void reader::close() {
     }
 }
 
-ssize_t reader::read(float* dest, const size_t count) {
+ssize_t reader::read(host_dtype* dest, const size_t count) {
     ssize_t read_count;
     if (buffer_.empty()) {
-        const ssize_t num_bytes_read = ::read(fd_, (void*)dest,  sizeof(float)*count);
-        read_count = num_bytes_read / sizeof(float);
+        const ssize_t num_bytes_read = ::read(fd_, (void*)dest,  sizeof(host_dtype)*count);
+        read_count = num_bytes_read / sizeof(host_dtype);
     } else {
         const ssize_t num_bytes_read = ::read(fd_, (void*)buffer_.data(),  sizeof(unsigned char)*count);
         if (!debug_disable_array_cast_ && num_bytes_read > 0) {
@@ -295,9 +302,16 @@ ssize_t reader::read(float* dest, const size_t count) {
 }
 
 void reader::allocate_if_needed(const size_t count) {
+#if defined HOST_DTYPE_SP32
+    // To convert from unsigned char in files to SP32 in host memory
     if (dtype_ == "uchar" && buffer_.size() != count) {
         buffer_.resize(count);
     }
+#else
+    if (dtype_ == "float") {
+        throw "With unsigned char host data type files with SP32 elements are not supported.";
+    }
+#endif
 }
 
 
@@ -317,9 +331,7 @@ direct_reader::direct_reader(const std::string& dtype) :
     }
     
     block_sz_ = get_env_var<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
-    #ifdef TRACE_ALL
-    std::cerr << "[batch reader] batch_reader::batch_reader(dtype=" << dtype << ", block size=" << block_sz_ << ")." << std::endl;
-    #endif
+    TRACE std::cerr << "[direct reader] direct_reader::direct_reader(dtype=" << dtype << ", block size=" << block_sz_ << ")." << std::endl;
 }
 
 bool direct_reader::is_opened() {
@@ -327,9 +339,7 @@ bool direct_reader::is_opened() {
 }
 
 bool direct_reader::open(const std::string& fname) {
-    #ifdef TRACE_ALL
-    std::cerr << "[batch reader] opening file (fname=" << fname << ")." << std::endl;
-    #endif
+    TRACE std::cerr << "[direct reader] opening file (fname=" << fname << ")." << std::endl;
     // Reser buffer offset each time new file is opened.
     buffer_offset_ = 0;
     // http://man7.org/linux/man-pages/man2/open.2.html
@@ -344,9 +354,7 @@ bool direct_reader::open(const std::string& fname) {
 }
 
 void direct_reader::close() {
-    #ifdef TRACE_ALL
-    std::cerr << "[batch reader] closing file." << std::endl;
-    #endif
+    TRACE std::cerr << "[direct reader] closing file." << std::endl;
     if (is_opened()) {
         ::close(fd_);
         fd_ = -1;
@@ -361,7 +369,7 @@ void direct_reader::close() {
  *    because we always read elements of size 1 byte.
  *    This method will fail if batch is less than 1 block.
  */
-ssize_t direct_reader::read(float* dest, const size_t count) {
+ssize_t direct_reader::read(host_dtype* dest, const size_t count) {
     // Number of elements preloaded from last read for this batch.
     const size_t nelements_preloaded = (buffer_offset_ == 0 ? 0 : block_sz_ - buffer_offset_);
     // Number of elements to read. This number is 'aligned' on block_sz_ boundary. But it's length
@@ -384,7 +392,7 @@ ssize_t direct_reader::read(float* dest, const size_t count) {
         nbytes_to_read                                                  // Number of bytes to read, always a whole number of blocks.
     );
     if (num_bytes_read < 0) {
-        // std::cerr << "Error reading file (errno=" << errno << "). Debug me." << std::endl;
+        TRACE std::cerr  << "Error reading file (errno=" << errno << "). Debug me." << std::endl;
         // Can it be the case that when I try to read something after I reached EOF, read when working
         // on files opened with O_DIRECT fails with EINVAL error instead of returning 0 bytes?
         // I am getting this error on a very last batch.
@@ -392,6 +400,7 @@ ssize_t direct_reader::read(float* dest, const size_t count) {
     }
     if (num_bytes_read == 0) {
         // This is fine. The higher level code will close this file and will open another one.
+        TRACE std::cerr << "Read 0 bytes, EOF?" << std::endl;
         return 0;
     }
     
@@ -399,11 +408,11 @@ ssize_t direct_reader::read(float* dest, const size_t count) {
     const size_t ntotal_bytes = nelements_preloaded + std::min(nelements_to_read, size_t(num_bytes_read));
     int read_idx(buffer_offset_);
     for (size_t i=0; i<ntotal_bytes; ++i) {
-        dest[i] = static_cast<float>(buffer_[read_idx++]);
+        dest[i] = static_cast<host_dtype>(buffer_[read_idx++]);
     }
 
     #ifdef TRACE_ALL
-    std::cerr << "[batch reader] reading data (buffer_offset_=" << buffer_offset_<< ", nelements_preloaded=" << nelements_preloaded
+    std::cerr << "[direct reader] reading data (buffer_offset_=" << buffer_offset_<< ", nelements_preloaded=" << nelements_preloaded
               << ", nelements_to_read=" << nelements_to_read << ", last_block_nelements=" << last_block_nelements
               << ", num_blocks_to_read=" << num_blocks_to_read << ", nbytes_to_read=" << nbytes_to_read
               << ", num_bytes_read=" << num_bytes_read << ", ntotal_bytes=" << ntotal_bytes
@@ -440,9 +449,7 @@ void direct_reader::allocate(const size_t new_sz) {
         throw fmt("Invalid buffer size (%u). Must be a multiple of block size (%u).", new_sz, block_sz_);
     }
     if (buffer_size_ < new_sz) {
-        #ifdef TRACE_ALL
-        std::cerr << "[batch reader] allocating memory (buffer size=" << buffer_size_ << ", new size=" << new_sz <<  ")." << std::endl;
-        #endif
+        TRACE std::cerr << "[direct reader] allocating memory (buffer size=" << buffer_size_ << ", new size=" << new_sz <<  ")." << std::endl;
         deallocate();
         const size_t alignment = block_sz_;
         buffer_ = static_cast<unsigned char*>(aligned_alloc(alignment, new_sz));
@@ -450,13 +457,13 @@ void direct_reader::allocate(const size_t new_sz) {
             throw std::bad_alloc();
         }
         buffer_size_ = new_sz;
+    } else {
+        TRACE std::cerr << "[direct reader] skipping memory allocation (buffer size=" << buffer_size_ << ", new size=" << new_sz <<  ")." << std::endl;
     }
 }
 
 void direct_reader::deallocate() {
-    #ifdef TRACE_ALL
-    std::cerr << "[batch reader] deallocating memory (buffer size=" << buffer_size_ << ")." << std::endl;
-    #endif
+    TRACE std::cerr << "[direct reader] deallocating memory (buffer size=" << buffer_size_ << ")." << std::endl;
     if (buffer_ != nullptr) {
         free(buffer_);
         buffer_ = nullptr;

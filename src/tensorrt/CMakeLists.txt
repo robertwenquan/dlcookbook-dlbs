@@ -37,7 +37,8 @@ set_target_properties(tensorrt_cuda_lib PROPERTIES LINKER_LANGUAGE CXX)
 set(TENSORRT_RT_LIB_SOURCE_FILES "src/engines/tensorrt/tensorrt_utils.hpp" "src/engines/tensorrt/tensorrt_utils.cpp"
                                  "src/engines/tensorrt/calibrator.hpp" "src/engines/tensorrt/profiler.hpp"
                                  "src/engines/tensorrt_engine.hpp" "src/engines/tensorrt_engine.cpp"
-                                 "src/engines/mgpu_engine.hpp")
+                                 "src/engines/mgpu_engine.hpp"
+                                 "src/engines/tensorrt/gpu_cast.h")
 add_library(tensorrt_rt_lib STATIC ${TENSORRT_RT_LIB_SOURCE_FILES})
 set_target_properties(tensorrt_rt_lib PROPERTIES LINKER_LANGUAGE CXX)
 
@@ -75,8 +76,12 @@ target_link_libraries(images2tensors ${TENSORRT_LIBS})
 
 FIND_PACKAGE(CUDA COMPONENTS cudart REQUIRED)
 if(CUDA_FOUND)
+    list(APPEND CUDA_NVCC_FLAGS "-std=c++11;-O1;-DVERBOSE")
+    SET(CUDA_PROPAGATE_HOST_FLAGS OFF)
+    CUDA_ADD_LIBRARY(cuda_kernels STATIC "src/engines/tensorrt/gpu_cast.h" "src/engines/tensorrt/gpu_cast.cu")
+
     include_directories(${CUDA_INCLUDE_DIRS})
-    target_link_libraries(tensorrt ${CUDA_LIBRARIES})
+    target_link_libraries(tensorrt ${CUDA_LIBRARIES} cuda_kernels)
     target_link_libraries(benchmark_host2device_copy ${CUDA_LIBRARIES})
 endif()
 
@@ -117,5 +122,9 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 # Uncomment the following line to enable super detailed tracining (print statments)
 # for some components.
-#add_definitions(-DTRACE_ALL)
+# add_definitions(-DTRACE_ALL)
+
+# The following definitions control the storage
+add_definitions(-DHOST_DTYPE_SP32)
+#add_definitions(-DHOST_DTYPE_INT8)
 

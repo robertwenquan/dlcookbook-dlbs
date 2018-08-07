@@ -35,7 +35,16 @@ public:
     void allocate(float *&buf, const size_t sz) override {
         cudaCheck(cudaHostAlloc(&buf, sz*sizeof(float), cudaHostAllocPortable|cudaHostAllocWriteCombined));
     }
+    void allocate(unsigned char *&buf, const size_t sz) override {
+        cudaCheck(cudaHostAlloc(&buf, sz*sizeof(unsigned char), cudaHostAllocPortable|cudaHostAllocWriteCombined));
+    }
     void deallocate(float *&buf) override {
+        if (buf) {
+            cudaCheck(cudaFreeHost(buf));
+            buf = nullptr;
+        }
+    }
+    void deallocate(unsigned char *&buf) override {
         if (buf) {
             cudaCheck(cudaFreeHost(buf));
             buf = nullptr;

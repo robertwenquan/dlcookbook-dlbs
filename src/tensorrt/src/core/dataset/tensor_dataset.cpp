@@ -56,7 +56,7 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
     inference_msg *output(nullptr);
     size_t num_images_in_batch = 0;
     abstract_reader* file_reader(nullptr);
-    const auto& reader_type = get_env_var<std::string>("DLBS_TENSORRT_FILE_READER", "direct");
+    const auto& reader_type = get_env_var<std::string>("DLBS_TENSORRT_FILE_READER", "default");
     if (reader_type == "default") {
         const bool advise_no_cache = (get_env_var<std::string>("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED", "") != "1");
         myself->logger_.log_warning(fmt(
@@ -65,6 +65,7 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
         ));
         file_reader = new reader(myself->opts_.dtype_, advise_no_cache);
     } else {
+        myself->logger_.log_info(fmt("[prefetcher       %02d/%02d]: using direct reader.", prefetcher_id, num_prefetchers));
         file_reader = new direct_reader(myself->opts_.dtype_);
     }
     try {

@@ -31,11 +31,27 @@
 #include <sys/stat.h>
 #include <semaphore.h>
 
+
+#if defined HOST_DTYPE_SP32
+    typedef float host_dtype;
+#elif defined HOST_DTYPE_INT8
+    typedef unsigned char host_dtype;
+#else
+    #error "Unknown host data type. Define either HOST_DTYPE_SP32 or HOST_DTYPE_INT8"
+#endif
+    
+#ifdef TRACE_ALL
+    #define TRACE
+#else
+    #define TRACE //
+#endif
+
 /**
  * @brief Fill vector with random numbers uniformly dsitributed in [0, 1).
  * @param vec Vector to initialize.
  */
 void fill_random(float *vec, const size_t sz);
+void fill_random(unsigned char *vec, const size_t sz);
 
 /**
  * @brief A short wrapper for std::to_string conversion.
@@ -369,7 +385,7 @@ public:
     virtual bool is_opened() = 0;
     virtual bool open(const std::string& fname) = 0;
     virtual void close() = 0;
-    virtual ssize_t read(float* dest, const size_t count) = 0;
+    virtual ssize_t read(host_dtype* dest, const size_t count) = 0;
     virtual void allocate_if_needed(const size_t count) = 0;
 };
 
@@ -391,7 +407,7 @@ public:
     bool is_opened();
     bool open(const std::string& fname);
     void close();
-    ssize_t read(float* dest, const size_t count);
+    ssize_t read(host_dtype* dest, const size_t count);
     void allocate_if_needed(const size_t count);
 };
 
@@ -407,7 +423,7 @@ private:
     
     unsigned char* buffer_ = nullptr;      // If images are stored as unsigned chars, use this buffer. This is an aligned 
                                            // buffer on the block_sz_ boundary and its size is a multiple of block_sz_.
-    size_t buffer_size_;                   // Size of the buffer in bytes.
+    size_t buffer_size_ = 0;               // Size of the buffer in bytes.
     size_t buffer_offset_ = 0;             // Offset in buffer if we have some bytes from previous read. In this case next read must 
                                            // write to buffer_ starting from block_sz_ position. The value of buffer_offset_ is
                                            // always < block_sz_.
@@ -424,7 +440,7 @@ public:
     /**
      * @brief Read 'count' elements from file.
      */
-    ssize_t read(float* dest, const size_t count);
+    ssize_t read(host_dtype* dest, const size_t count);
     // This is deprecated and does nothing. All allocations
     // are done on the fly in read function.
     void allocate_if_needed(const size_t count) {}
@@ -436,15 +452,24 @@ private:
 class allocator {
 public:
     virtual void allocate(float *&buf, const size_t sz) = 0;
+    virtual void allocate(unsigned char *&buf, const size_t sz) = 0;
+
     virtual void deallocate(float *&buf) = 0;
+    virtual void deallocate(unsigned char *&buf) = 0;
 };
 
 class standard_allocator : public  allocator {
 public:
-    void allocate(float *&buf, const size_t sz) override {
-        buf = new float[sz];
-    }
+    void allocate(float *&buf, const size_t sz) override { buf = new float[sz]; }
+    void allocate(unsigned char *&buf, const size_t sz) override { buf = new unsigned char[sz]; }
+
     void deallocate(float *&buf) override {
+        if (buf) {
+            delete [] buf;
+            buf = nullptr;
+        }
+    }
+    void deallocate(unsigned char *&buf) override {
         if (buf) {
             delete [] buf;
             buf = nullptr;
