@@ -40,10 +40,10 @@
     #error "Unknown host data type. Define either HOST_DTYPE_SP32 or HOST_DTYPE_INT8"
 #endif
     
-#ifdef TRACE_ALL
-    #define TRACE
+#ifdef DEBUG_LOG
+    #define DLOG(msg) do { std::cerr << msg << std::endl; } while(0)
 #else
-    #define TRACE //
+    #define DLOG(msg)
 #endif
 
 /**
@@ -163,6 +163,8 @@ public:
     static void get_image_files(std::string dir, std::vector<std::string>& files, std::string subdir="");
     
     static void initialize_dataset(std::string& data_dir, std::vector<std::string>& files);
+    
+    static int get_direct_io_block_size();
 };
 
 /**

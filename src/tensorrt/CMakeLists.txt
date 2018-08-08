@@ -120,9 +120,8 @@ set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
-# Uncomment the following line to enable super detailed tracining (print statments)
-# for some components.
-# add_definitions(-DTRACE_ALL)
+# Uncomment the following line to enable super detailed logging for some components.
+#add_definitions(-DDEBUG_LOG)
 
 # The following definitions control the storage
 add_definitions(-DHOST_DTYPE_SP32)

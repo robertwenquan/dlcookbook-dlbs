@@ -58,6 +58,10 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
     abstract_reader* file_reader(nullptr);
     const auto& reader_type = get_env_var<std::string>("DLBS_TENSORRT_FILE_READER", "default");
     if (reader_type == "default") {
+        myself->logger_.log_info(
+            fmt("[prefetcher       %02d/%02d]: Will use reader with regular IO (data can be cached by OS).",
+                prefetcher_id, num_prefetchers)
+        );
         const bool advise_no_cache = (get_env_var<std::string>("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED", "") != "1");
         myself->logger_.log_warning(fmt(
             "[prefetcher       %02d/%02d]: will advise OS to not cache dataset files: %d",
@@ -65,7 +69,11 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
         ));
         file_reader = new reader(myself->opts_.dtype_, advise_no_cache);
     } else {
-        myself->logger_.log_info(fmt("[prefetcher       %02d/%02d]: using direct reader.", prefetcher_id, num_prefetchers));
+        const int block_sz = fs_utils::get_direct_io_block_size();
+        myself->logger_.log_info(
+            fmt("[prefetcher       %02d/%02d]: Will use reader with direct IO (O_DIRECT) to bypass OS cache (block size=%d).",
+                prefetcher_id, num_prefetchers, block_sz)
+        );
         file_reader = new direct_reader(myself->opts_.dtype_);
     }
     try {

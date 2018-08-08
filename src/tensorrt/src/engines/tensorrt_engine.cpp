@@ -214,13 +214,24 @@ void tensorrt_inference_engine::do_inference(abstract_queue<inference_msg*> &req
         return;
     }
     const std::string me = fmt("[inference engine %02d/%02d]", abs(engine_id_), num_engines_);
-    logger_.log_info(me + ": Version of inference engine is latest");
+    logger_.log_info(me + ": Implementation version is latest");
+#ifdef HOST_DTYPE_SP32
+    logger_.log_info(me + ": Will consume tensor<float> tensors.");
+#elif defined HOST_DTYPE_INT8
+    logger_.log_info(me + ": Will consume tensor<unsigned char> tensors. Casting to 'float' will be done on GPU.");
+#else
+    logger_.log_warning(me + ": Will consume tensor<?> tensors. This is BUG.");
+#endif
     // If it's true, the code below will be overlaping
     // copy/compute ops. This makes sense when time to fetch data fro, request queue
     // is very small. If it's large (greater than inference time), you may want to do
     // everything sequentially.
     const bool overlap_copy_compute = (get_env_var<std::string>("DLBS_TENSORRT_DO_NOT_OVERLAP_COPY_COMPUTE", "") != "1");
-    logger_.log_info(me + ": overlap copy and compute " + S(overlap_copy_compute));
+    if (overlap_copy_compute) {
+        logger_.log_info(me + ": Will overlap compute (inference) and data transfers (host to device).");
+    } else {
+        logger_.log_info(me + ": Will NOT overlap compute (inference) and data transfers (host to device).");
+    }
     cuda_helper helper({"input_consumed","infer_start","infer_stop"}, {"copy","compute"});
     running_average copy2device_synch, fetch, process, process_fetch, copy2host, submit;
     try {
@@ -238,16 +249,16 @@ void tensorrt_inference_engine::do_inference(abstract_queue<inference_msg*> &req
             }
             //
             if (!current_msg) {
-                TRACE logger_.log_info(me + ": getting first inference request");
+                DLOG(me + ": getting first inference request");
                 clock.restart();  current_msg = request_queue.pop();  fetch.update(clock.ms_elapsed());
-                TRACE logger_.log_info(me + ": request has been fetched, starting async transfer to device.");
+                DLOG(me + ": request has been fetched, starting async transfer to device.");
                 curr_batch_clock.restart();
                 copy_input_to_gpu_asynch(current_msg, helper.stream("copy"));
-                TRACE logger_.log_info(me + ": async device transfer started.");
+                DLOG(me + ": async device transfer started.");
             }
-            TRACE logger_.log_info(me + ": waiting for previous device copy to complete.");
+            DLOG(me + ": waiting for previous device copy to complete.");
             clock.restart();  helper.synch_stream("copy");  copy2device_synch.update(clock.ms_elapsed());
-            TRACE logger_.log_info(me + ": previous device copy completed.");
+            DLOG(me + ": previous device copy completed.");
             // Run asynchronously GPU kernel and wait for input data consumed
             infer_clock.restart();
             helper.record_event("infer_start", "compute");

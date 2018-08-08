@@ -187,8 +187,8 @@ void fs_utils::get_image_files(std::string dir, std::vector<std::string>& files,
 void fs_utils::initialize_dataset(std::string& data_dir, std::vector<std::string>& files) {
     data_dir = fs_utils::normalize_path(data_dir);
     if (!fs_utils::read_cache(data_dir, files)) {
-        std::cout << "[image_provider        ]: found " + S(files.size()) +  " image files in file system." << std::endl;
         fs_utils::get_image_files(data_dir, files);
+        std::cout << "[image_provider        ]: found " + S(files.size()) +  " image files in file system." << std::endl;
         if (!files.empty()) {
             //if (!fs_utils::write_cache(data_dir, files)) {
             //    std::cout << "[image_provider        ]: failed to write file cache." << std::endl;
@@ -204,6 +204,10 @@ void fs_utils::initialize_dataset(std::string& data_dir, std::vector<std::string
         std::cout << "[image_provider        ]: no input data found, exiting." << std::endl;
     }
     fs_utils::to_absolute_paths(data_dir, files);
+}
+
+int fs_utils::get_direct_io_block_size() {
+    return get_env_var<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
 }
 
 
@@ -330,8 +334,8 @@ direct_reader::direct_reader(const std::string& dtype) :
         );
     }
     
-    block_sz_ = get_env_var<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
-    TRACE std::cerr << "[direct reader] direct_reader::direct_reader(dtype=" << dtype << ", block size=" << block_sz_ << ")." << std::endl;
+    block_sz_ = fs_utils::get_direct_io_block_size();
+    DLOG(fmt("[direct reader] direct_reader::direct_reader(dtype=%s, block size=%u).", dtype.c_str(), block_sz_));
 }
 
 bool direct_reader::is_opened() {
@@ -339,7 +343,7 @@ bool direct_reader::is_opened() {
 }
 
 bool direct_reader::open(const std::string& fname) {
-    TRACE std::cerr << "[direct reader] opening file (fname=" << fname << ")." << std::endl;
+    DLOG(fmt("[direct reader] opening file (fname=%s).", fname.c_str()));
     // Reser buffer offset each time new file is opened.
     buffer_offset_ = 0;
     // http://man7.org/linux/man-pages/man2/open.2.html
@@ -354,7 +358,7 @@ bool direct_reader::open(const std::string& fname) {
 }
 
 void direct_reader::close() {
-    TRACE std::cerr << "[direct reader] closing file." << std::endl;
+    DLOG("[direct reader] closing file.");
     if (is_opened()) {
         ::close(fd_);
         fd_ = -1;
@@ -392,7 +396,7 @@ ssize_t direct_reader::read(host_dtype* dest, const size_t count) {
         nbytes_to_read                                                  // Number of bytes to read, always a whole number of blocks.
     );
     if (num_bytes_read < 0) {
-        TRACE std::cerr  << "Error reading file (errno=" << errno << "). Debug me." << std::endl;
+        DLOG(fmt("Error reading file (errno=%d). Debug me.", int(errno)));
         // Can it be the case that when I try to read something after I reached EOF, read when working
         // on files opened with O_DIRECT fails with EINVAL error instead of returning 0 bytes?
         // I am getting this error on a very last batch.
@@ -400,7 +404,7 @@ ssize_t direct_reader::read(host_dtype* dest, const size_t count) {
     }
     if (num_bytes_read == 0) {
         // This is fine. The higher level code will close this file and will open another one.
-        TRACE std::cerr << "Read 0 bytes, EOF?" << std::endl;
+        DLOG("Read 0 bytes, EOF?");
         return 0;
     }
     
@@ -410,16 +414,14 @@ ssize_t direct_reader::read(host_dtype* dest, const size_t count) {
     for (size_t i=0; i<ntotal_bytes; ++i) {
         dest[i] = static_cast<host_dtype>(buffer_[read_idx++]);
     }
-
-    #ifdef TRACE_ALL
+#ifdef DEBUG_LOG
     std::cerr << "[direct reader] reading data (buffer_offset_=" << buffer_offset_<< ", nelements_preloaded=" << nelements_preloaded
               << ", nelements_to_read=" << nelements_to_read << ", last_block_nelements=" << last_block_nelements
               << ", num_blocks_to_read=" << num_blocks_to_read << ", nbytes_to_read=" << nbytes_to_read
               << ", num_bytes_read=" << num_bytes_read << ", ntotal_bytes=" << ntotal_bytes
               << ", count=" << count
               <<  ")." << std::endl;
-    #endif
-    
+#endif
     // Deal with offset for a next batch only if we have read entire batch
     if (num_bytes_read == nbytes_to_read) {
         if (last_block_nelements == 0) {
@@ -449,7 +451,7 @@ void direct_reader::allocate(const size_t new_sz) {
         throw fmt("Invalid buffer size (%u). Must be a multiple of block size (%u).", new_sz, block_sz_);
     }
     if (buffer_size_ < new_sz) {
-        TRACE std::cerr << "[direct reader] allocating memory (buffer size=" << buffer_size_ << ", new size=" << new_sz <<  ")." << std::endl;
+        DLOG(fmt("[direct reader] allocating memory (buffer size=%u, new size=%u).", buffer_size_, new_sz));
         deallocate();
         const size_t alignment = block_sz_;
         buffer_ = static_cast<unsigned char*>(aligned_alloc(alignment, new_sz));
@@ -458,12 +460,12 @@ void direct_reader::allocate(const size_t new_sz) {
         }
         buffer_size_ = new_sz;
     } else {
-        TRACE std::cerr << "[direct reader] skipping memory allocation (buffer size=" << buffer_size_ << ", new size=" << new_sz <<  ")." << std::endl;
+        DLOG(fmt("[direct reader] skipping memory allocation (buffer size=%u, new size=%u).", buffer_size_, new_sz));
     }
 }
 
 void direct_reader::deallocate() {
-    TRACE std::cerr << "[direct reader] deallocating memory (buffer size=" << buffer_size_ << ")." << std::endl;
+    DLOG(fmt("[direct reader] deallocating memory (buffer size=%u).", buffer_size_));
     if (buffer_ != nullptr) {
         free(buffer_);
         buffer_ = nullptr;
