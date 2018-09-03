@@ -6,10 +6,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 include_directories(src)
 
 if (0)
+    # -Wold-style-cast  -Wundef
     add_compile_options(-pedantic -Wall -Wextra -Wcast-align -Wcast-qual -Wctor-dtor-privacy -Wdisabled-optimization)
     add_compile_options(-Wformat=2 -Winit-self -Wlogical-op -Wmissing-declarations -Wmissing-include-dirs -Wnoexcept)
-    add_compile_options(-Wold-style-cast -Woverloaded-virtual -Wredundant-decls -Wshadow -Wsign-conversion -Wsign-promo)
-    add_compile_options(-Wstrict-null-sentinel -Wswitch-default -Wundef -Werror -Wno-unused)
+    add_compile_options(-Woverloaded-virtual -Wredundant-decls -Wshadow -Wsign-conversion -Wsign-promo)
+    add_compile_options(-Wstrict-null-sentinel -Wswitch-default -Werror -Wno-unused)
     add_compile_options(-Wstrict-overflow=5)
 endif()
 
@@ -111,19 +112,55 @@ install(TARGETS tests_ipc RUNTIME DESTINATION bin)
 install(TARGETS tests_direct_reader RUNTIME DESTINATION bin)
 
 
-#if(NOT CMAKE_BUILD_TYPE)
-#  set(CMAKE_BUILD_TYPE Release)
-#endif()
 set(CMAKE_BUILD_TYPE Release)
 #set(CMAKE_BUILD_TYPE Debug)
+message("Configuring TensorRT benchmark backend in ${CMAKE_BUILD_TYPE} mode.")
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
-# Uncomment the following line to enable super detailed logging for some components.
-#add_definitions(-DDEBUG_LOG)
+# -----------------------------------------------------------------------------------
+# It must be disable for performance benchmarks.
+option(DEBUG_LOG "Enable detailed logging for some of the componenets." OFF)
+if (DEBUG_LOG)
+    message("Configuring TensorRT benchmark backend with detailed logging.")
+    add_definitions(-DDEBUG_LOG)
+endif()
+# -----------------------------------------------------------------------------------
 
-# The following definitions control the storage
-add_definitions(-DHOST_DTYPE_SP32)
-#add_definitions(-DHOST_DTYPE_INT8)
 
+# -----------------------------------------------------------------------------------
+# The following definitions control the host data type.
+set(HOST_DTYPE "INT8")
+if("xyz_${HOST_DTYPE}" STREQUAL "xyz_INT8")
+    add_definitions(-DHOST_DTYPE_INT8)
+elseif("xyz_${HOST_DTYPE}" STREQUAL "xyz_FP32")
+    add_definitions(-DHOST_DTYPE_FP32)
+else()
+    message(FATAL_ERROR "Invalid value for HOST_DTYPE (=${HOST_DTYPE}). Must be INT8 or SP32.")
+endif()
+message("Configuring TensorRT benchmark backend with ${HOST_DTYPE} data type.")
+# -----------------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------------
+find_package(Doxygen)
+#if (DOXYGEN_FOUND)
+    message("Doxygen tool found. Adding 'build_docs' target. To build HTML documentation, run: make build_docs.")
+    # set input and output files
+    set(DOXYGEN_IN docs/Doxyfile.in)
+    set(DOXYGEN_OUT ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile)
+    
+    # request to configure the file
+    configure_file(${DOXYGEN_IN} ${DOXYGEN_OUT} @ONLY)
+
+    # note the option ALL which allows to build the docs together with the application
+    add_custom_target( build_docs
+        COMMAND cd ${CMAKE_SOURCE_DIR}/docs && ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docs
+        COMMENT "Generating API documentation with Doxygen"
+        VERBATIM )
+
+    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/html DESTINATION share/doc)
+#endif(DOXYGEN_FOUND)
+# -----------------------------------------------------------------------------------

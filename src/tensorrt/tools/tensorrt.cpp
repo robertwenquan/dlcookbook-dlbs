@@ -36,6 +36,7 @@ void parse_command_line(int argc, char **argv,
                         po::options_description opt_desc, po::variables_map& var_map,
                         inference_engine_opts& engine_opts, dataset_opts& data_opts,
                         logger_impl& logger);
+void print_file_reader_warnings(logger_impl& logger, const std::string& me);
 
 void segfault_sigaction(int signal, siginfo_t *si, void *arg) {
     void *array[10];
@@ -98,7 +99,7 @@ int main(int argc, char **argv) {
     logger.log_info(data_opts);
     //
     allocator *alloc(nullptr);
-    if (get_env_var<std::string>("DLBS_TENSORRT_NO_PINNED_MEMORY", "") != "1") {
+    if (environment::pinned_memory()) {
         logger.log_info(me + "Creating pinned memory allocator.");
         alloc = new pinned_memory_allocator();
     } else {
@@ -120,9 +121,6 @@ int main(int argc, char **argv) {
     // from pool of task objects, will populate them with data and will submit tasks to data queue. All
     // preprocessing logic needs to be implemented in data provider.
     dataset* data(nullptr);
-    if (get_env_var<std::string>("DLB_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS", "") == "1") {
-        logger.log_warning(me + "Will not cast images float arrays (this is for debug purposes only). Normally you should not see this message.");
-    }
     if (data_opts.data_name_ == "synthetic" || data_opts.data_dir_ == "") {
         data = new synthetic_dataset(&infer_msg_pool, engine.request_queue());
         logger.log_info(me + "Will use 'synthetic' data set");
@@ -131,7 +129,11 @@ int main(int argc, char **argv) {
         logger.log_warning(me + "Computing resize dimensions assuming input data has shape [BatchSize, 3, H, W] where H == W.");
         data_opts.height_ = data_opts.width_ = std::sqrt(engine.input_size() / 3);
         if (data_opts.data_name_ == "images") {
-            logger.log_info(me + "Will use 'images' data set");
+            if (!environment::allow_image_dataset()) {
+                logger.log_warning(me + "Image dataset is disabled by default due to serious performance issues.");
+                logger.log_error(me + "If you really want to use it, provide the following env variable: DLBS_TENSORRT_ALLOW_IMAGE_DATASET=yes");
+            }
+            logger.log_warning(me + "Will use 'images' data set (found DLBS_TENSORRT_ALLOW_IMAGE_DATASET env variable). Expect bad performance due to unoptimized ingestion pipeline.");
             data = new image_dataset(data_opts, &infer_msg_pool, engine.request_queue(), logger);
         } else {
             if (data_opts.data_name_ == "tensors1") {
@@ -143,6 +145,7 @@ int main(int argc, char **argv) {
             } else {
                 logger.log_error(me + "Invalid input dataset (" + data_opts.data_name_ + ")");
             }
+            print_file_reader_warnings(logger, me);
             data = new tensor_dataset(data_opts, &infer_msg_pool, engine.request_queue(), logger);
         }
     }
@@ -179,9 +182,9 @@ int main(int argc, char **argv) {
     // Sync with othet processes if need to do so
     process_barrier* barrier(nullptr);
     timer synch_timer;
-    if (get_env_var<std::string>("DLBS_TENSORRT_SYNCH_BENCHMARKS", "") != "") {
+    if (!environment::synch_benchmarks().empty()) {
         engine.pause();
-        barrier = new process_barrier(get_env_var<std::string>("DLBS_TENSORRT_SYNCH_BENCHMARKS", ""));
+        barrier = new process_barrier(environment::synch_benchmarks());
         logger.log_info(fmt("%sSynching with other processes (%d/%d)", me.c_str(), barrier->rank(), barrier->count()));
         barrier->wait();
         engine.resume();
@@ -337,4 +340,20 @@ void parse_command_line(int argc, char **argv,
     data_opts.prefetch_batch_size_ = static_cast<size_t>(std::max(prefetch_batch_size, 0));;
     if (data_opts.fake_decoder_ && data_opts.num_decoders_ > 1)
         logger.log_warning("Fake decoder will be used but number of decoders > 1. You may want to set it to 1.");
+}
+
+void print_file_reader_warnings(logger_impl& logger, const std::string& me) {
+    const auto& file_reader = environment::file_reader();
+    if (file_reader == "") {
+        logger.log_warning(me + "DLBS_TENSORRT_FILE_READER is not set. In this version default file reader changed from 'default' to 'directio'.");
+    }
+    if (file_reader == "directio") {
+        logger.log_info(me + "You are using file reader with DIRECT IO. This is not very well tested feature. If you will be experiencing issues with it, set DLBS_TENSORRT_FILE_READER=default");
+    } else if (file_reader == "default" || file_reader == "") {
+        if (!environment::remove_files_from_os_cache()) {
+            logger.log_warning(me + "Your dataset will be cached by OS (if not disabled). If you do not want this, set DLBS_TENSORRT_FILE_READER=directio");
+        } else {
+            logger.log_warning(me + "You will be using standard file reader with option to remove files from OS cache. Better use directio reader: DLBS_TENSORRT_FILE_READER=directio");
+        }
+    }
 }

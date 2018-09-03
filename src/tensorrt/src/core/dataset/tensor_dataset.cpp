@@ -24,7 +24,7 @@
 
 void tensor_dataset::prefetcher_func(tensor_dataset* myself,
                                      const size_t prefetcher_id, const size_t num_prefetchers) {
-    std::string split_strategy = get_env_var<std::string>("DLBS_TENSORRT_DATASET_SPLIT", "uniform");
+    std::string split_strategy = environment::dataset_split();
     sharded_vector<std::string> *my_files(nullptr);
     std::vector<std::string> fnames;
     if (split_strategy == "uniform") {
@@ -56,25 +56,30 @@ void tensor_dataset::prefetcher_func(tensor_dataset* myself,
     inference_msg *output(nullptr);
     size_t num_images_in_batch = 0;
     abstract_reader* file_reader(nullptr);
-    const auto& reader_type = get_env_var<std::string>("DLBS_TENSORRT_FILE_READER", "default");
-    if (reader_type == "default") {
+    const auto& reader_type = environment::file_reader();
+    if (reader_type == "default" || reader_type == "") {
         myself->logger_.log_info(
             fmt("[prefetcher       %02d/%02d]: Will use reader with regular IO (data can be cached by OS).",
                 prefetcher_id, num_prefetchers)
         );
-        const bool advise_no_cache = (get_env_var<std::string>("DLBS_TENSORRT_NO_POSIX_FADV_DONTNEED", "") != "1");
+        const bool advise_no_cache = environment::remove_files_from_os_cache();
         myself->logger_.log_warning(fmt(
             "[prefetcher       %02d/%02d]: will advise OS to not cache dataset files: %d",
             prefetcher_id, num_prefetchers, int(advise_no_cache)
         ));
         file_reader = new reader(myself->opts_.dtype_, advise_no_cache);
-    } else {
+    } else if (reader_type == "directio") {
         const int block_sz = fs_utils::get_direct_io_block_size();
         myself->logger_.log_info(
             fmt("[prefetcher       %02d/%02d]: Will use reader with direct IO (O_DIRECT) to bypass OS cache (block size=%d).",
                 prefetcher_id, num_prefetchers, block_sz)
         );
         file_reader = new direct_reader(myself->opts_.dtype_);
+    } else {
+        myself->logger_.log_error(
+            fmt("[prefetcher       %02d/%02d]: Invalid file reader (%s). Must be one of ['directio', 'default', '']",
+                prefetcher_id, num_prefetchers, reader_type.c_str())
+        );
     }
     try {
         timer clock;
@@ -135,7 +140,7 @@ tensor_dataset::tensor_dataset(const dataset_opts& opts, inference_msg_pool* poo
     }
     prefetchers_.resize(opts_.num_prefetchers_, nullptr);
 }
-    
+
 void tensor_dataset::run() {
     // Run prefetch workers
     for (size_t i=0; i<prefetchers_.size(); ++i) {

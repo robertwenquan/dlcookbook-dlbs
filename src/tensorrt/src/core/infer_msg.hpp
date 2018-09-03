@@ -22,8 +22,9 @@
 #include "queues.hpp"
 
 /**
- * @brief A structure that contains input/output data for an inference task. It's better
- * to create a pool of these objects and reuse them.
+ * @brief A structure that contains input/output data for an inference task. 
+ * 
+ * It's better to create a pool of these objects and reuse them.
  */
 class inference_msg {
 private:
@@ -89,11 +90,12 @@ public:
 
 
 /**
- * @brief Pool of task objects initialized to have correct storage size. This is used to
- * not allocate/deallocate memory during benchmarks.
- * To submit new infer request, fetch free task from this pool, initialize with your input
- * data and submit to a data queue. Once results is obtained, release the task by making it
- * avaialble for subsequent requests.
+ * @brief Pool of task objects initialized to have correct storage size. 
+ * 
+ * This is used to not allocate/deallocate memory during benchmarks. To submit new infer
+ * request, fetch free task from this pool, initialize with your input data and submit to
+ * a data queue. Once results is obtained, release the task by making it avaialble for 
+ * subsequent requests.
  */
 class inference_msg_pool {
 private:

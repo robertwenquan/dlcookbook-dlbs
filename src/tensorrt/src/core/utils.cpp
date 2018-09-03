@@ -23,16 +23,7 @@
 #include <chrono>
 #include <thread>
 #include <sstream>
-
-
-template<>
-std::string S<bool>(const bool &t) { return (t ? "true" : "false"); }
-
-template<>
-int get_env_var<int>(std::string const &var, const int& default_val) {
-    char *val = getenv( var.c_str() );
-    return val == nullptr ? default_val : std::stoi(val);
-}
+#include <algorithm>
 
 void fill_random(float *vec, const size_t sz) {
   std::random_device rnd_device;
@@ -41,6 +32,7 @@ void fill_random(float *vec, const size_t sz) {
   auto gen = std::bind(dist, mersenne_engine);
   std::generate(vec, vec+sz, gen);
 }
+
 void fill_random(unsigned char *vec, const size_t sz) {
   std::random_device rnd_device;
   std::mt19937 mersenne_engine(rnd_device());
@@ -48,6 +40,58 @@ void fill_random(unsigned char *vec, const size_t sz) {
   auto gen = std::bind(dist, mersenne_engine);
   std::generate(vec, vec+sz, gen);
 }
+
+template<>
+std::string S<bool>(const bool &t) { return (t ? "true" : "false"); }
+
+template<>
+std::string from_string<std::string>(const char* const val) { return std::string(val); }
+
+template<>
+int from_string<int>(const char* const val) { return std::stoi(val); }
+
+template<>
+bool from_string<bool>(const char* const val) { 
+    std::string str = std::string(val);
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    return (str == "1" || str == "on" || str == "yes" || str == "true");
+}
+
+std::string environment::file_reader() {
+    return environment::variable<std::string>("DLBS_TENSORRT_FILE_READER", "");
+}
+bool environment::remove_files_from_os_cache() {
+    return environment::variable<bool>("DLBS_TENSORRT_REMOVE_FILES_FROM_OS_CACHE", "yes");
+}
+
+bool environment::pinned_memory() {
+    return environment::variable<bool>("DLBS_TENSORRT_ALLOCATE_PINNED_MEMORY", "yes");
+}
+
+bool environment::allow_image_dataset() {
+    return environment::variable<bool>("DLBS_TENSORRT_ALLOW_IMAGE_DATASET", "no");
+}
+
+std::string environment::synch_benchmarks() {
+    return environment::variable<std::string>("DLBS_TENSORRT_SYNCH_BENCHMARKS", "");
+}
+
+int environment::storage_block_size() {
+    return environment::variable<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
+}
+
+std::string environment::dataset_split() {
+    return environment::variable<std::string>("DLBS_TENSORRT_DATASET_SPLIT", "uniform");
+}
+
+bool environment::overlap_copy_compute() {
+    return environment::variable<bool>("DLBS_TENSORRT_OVERLAP_COPY_COMPUTE", "yes");
+}
+
+std::string environment::inference_impl_ver() {
+    return variable<std::string>("DLBS_TENSORRT_INFERENCE_IMPL_VER", "");
+}
+
 
 std::string fs_utils::parent_dir(std::string dir) {
     if (dir.empty())
@@ -207,7 +251,7 @@ void fs_utils::initialize_dataset(std::string& data_dir, std::vector<std::string
 }
 
 int fs_utils::get_direct_io_block_size() {
-    return get_env_var<int>("DLBS_TENSORRT_STORAGE_BLOCK_SIZE", 512);
+    return environment::storage_block_size();
 }
 
 
@@ -265,7 +309,6 @@ template void PictureTool::opencv2tensor<unsigned char>(unsigned char* opencv_da
 
 reader::reader(const std::string& dtype,
                const bool advise_no_cache) : advise_no_cache_(advise_no_cache), dtype_(dtype) {
-    debug_disable_array_cast_ = (get_env_var<std::string>("DLBS_TENSORRT_DEBUG_DO_NOT_CAST_ARRAYS", "") == "1");
 }
 
 bool reader::is_opened() {
@@ -297,7 +340,7 @@ ssize_t reader::read(host_dtype* dest, const size_t count) {
         read_count = num_bytes_read / sizeof(host_dtype);
     } else {
         const ssize_t num_bytes_read = ::read(fd_, (void*)buffer_.data(),  sizeof(unsigned char)*count);
-        if (!debug_disable_array_cast_ && num_bytes_read > 0) {
+        if (num_bytes_read > 0) {
             std::copy(buffer_.data(), buffer_.data() + num_bytes_read, dest);
         }
         read_count = num_bytes_read;
